@@ -1,0 +1,355 @@
+{
+  "name": "AutoDoc Pipeline — Manual /createguide",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack-createguide-v2",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "n_01_slack_webhook",
+      "name": "Slack /createguide Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [240, 600],
+      "webhookId": "slack-createguide-v2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body;\nconst commandText = body.text || '';\nconst prUrls = (commandText.match(/https:\\/\\/bitbucket\\.org\\/[^\\s\"<>\\n]+\\/pull-requests\\/\\d+/g) || []).map(u => u.replace(/[,;]+$/, ''));\nconst contextHint = commandText.replace(/https:\\/\\/bitbucket\\.org\\/[^\\s\"<>\\n]+\\/pull-requests\\/\\d+/g, '').replace(/[\",]/g, '').trim();\nconst parsedPRs = prUrls.map(url => {\n  const match = url.match(/bitbucket\\.org\\/[^/]+\\/([^/]+)\\/pull-requests\\/(\\d+)/);\n  if (!match) return null;\n  return { repo_slug: match[1], pr_id: match[2], url };\n}).filter(Boolean);\nif (parsedPRs.length === 0) throw new Error('No valid Bitbucket PR URLs found. Paste one or more Bitbucket PR URLs in the message.');\nreturn [{ json: { source: 'manual', parsed_prs: parsedPRs, context_hint: contextHint, requester: body.user_name || 'support-engineer', channel_id: body.channel_id } }];"
+      },
+      "id": "n_02_parse_command",
+      "name": "Parse Slack Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "const { parsed_prs, context_hint, requester, channel_id } = $input.first().json;\nreturn parsed_prs.map((pr, i) => ({\n  json: {\n    repo_slug: pr.repo_slug,\n    pr_id: pr.pr_id,\n    context_hint: context_hint || '',\n    requester: requester || 'support-engineer',\n    channel_id: channel_id || ''\n  },\n  pairedItem: { item: 0 }\n}));"
+      },
+      "id": "n_03_split_prs",
+      "name": "Split PRs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 600]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.bitbucket.org/2.0/repositories/YOUR_BITBUCKET_WORKSPACE/' + $json.repo_slug + '/pullrequests/' + $json.pr_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "id": "n_04_fetch_meta",
+      "name": "Fetch PR Metadata",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 600],
+      "credentials": {
+        "oAuth2Api": { "id": "YOUR_BITBUCKET_OAUTH2_CREDENTIAL_ID", "name": "Bitbucket OAuth2" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.bitbucket.org/2.0/repositories/YOUR_BITBUCKET_WORKSPACE/' + $('Split PRs').item.json.repo_slug + '/pullrequests/' + $('Split PRs').item.json.pr_id + '/diffstat' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "id": "n_05_fetch_diffstat",
+      "name": "Fetch Diffstat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1120, 600],
+      "credentials": {
+        "oAuth2Api": { "id": "YOUR_BITBUCKET_OAUTH2_CREDENTIAL_ID", "name": "Bitbucket OAuth2" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.bitbucket.org/2.0/repositories/YOUR_BITBUCKET_WORKSPACE/' + $('Split PRs').item.json.repo_slug + '/pullrequests/' + $('Split PRs').item.json.pr_id + '/commits' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {}
+      },
+      "id": "n_06_fetch_commits",
+      "name": "Fetch Commits",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1340, 600],
+      "credentials": {
+        "oAuth2Api": { "id": "YOUR_BITBUCKET_OAUTH2_CREDENTIAL_ID", "name": "Bitbucket OAuth2" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://api.bitbucket.org/2.0/repositories/YOUR_BITBUCKET_WORKSPACE/' + $('Split PRs').item.json.repo_slug + '/pullrequests/' + $('Split PRs').item.json.pr_id + '/diff' }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "n_07_fetch_diff",
+      "name": "Fetch Diff",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1560, 600],
+      "credentials": {
+        "oAuth2Api": { "id": "YOUR_BITBUCKET_OAUTH2_CREDENTIAL_ID", "name": "Bitbucket OAuth2" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const allDiffItems = $input.all();\nconst allOriginals = $('Split PRs').all();\nconst allMeta = $('Fetch PR Metadata').all();\nconst allDiffstats = $('Fetch Diffstat').all();\nconst allCommits = $('Fetch Commits').all();\n\nconst prGroup = allDiffItems.map((diffItem, i) => {\n  const original = allOriginals[i]?.json || {};\n  const prMeta = allMeta[i]?.json || {};\n  const diffstatData = allDiffstats[i]?.json || {};\n  const commitsData = allCommits[i]?.json || {};\n  const diffRaw = diffItem.json.data || '';\n\n  const changedFiles = (diffstatData.values || []).map(f => ({\n    path: f.new?.path || f.old?.path || 'unknown',\n    status: f.status,\n    lines_added: f.lines_added || 0,\n    lines_removed: f.lines_removed || 0\n  }));\n\n  const commitMessages = (commitsData.values || []).map(c => c.message?.split('\\n')[0] || '');\n  const diff = String(diffRaw).length > 40000 ? String(diffRaw).substring(0, 40000) + '\\n...[truncated]' : String(diffRaw);\n\n  return {\n    repo_slug: original.repo_slug,\n    pr_id: original.pr_id,\n    pr_title: prMeta.title || 'Unknown PR',\n    pr_description: prMeta.description || 'No description',\n    author: prMeta.author?.display_name || original.requester || 'unknown',\n    service_md: 'No SERVICE.md found.',\n    changed_files: changedFiles,\n    commit_messages: commitMessages,\n    diff\n  };\n});\n\nconst first = allOriginals[0]?.json || {};\n\nreturn [{\n  json: {\n    branch_slug: 'manual',\n    source: 'manual',\n    context_hint: first.context_hint || '',\n    requester: first.requester || '',\n    pr_group: prGroup\n  }\n}];"
+      },
+      "id": "n_08_aggregate",
+      "name": "Aggregate PR Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $json;\nconst prs = data.pr_group || [];\nconst systemPrompt = `You are a senior technical analyst reviewing pull requests to understand their user-facing impact.\\n\\nReturn ONLY a valid JSON object with these fields:\\n- feature_name: short clear name (3-6 words)\\n- user_impact: \"yes\", \"no\", or \"partial\"\\n- what_changed: plain English summary, 2-3 sentences, no jargon\\n- user_actions: array of strings — things users can now do\\n- guide_title: user-friendly title for the documentation guide\\n- complexity: \"simple\" | \"moderate\" | \"complex\"\\n- affected_panels: array from [\"tenant-admin\", \"ordering\", \"ops\"]\\n\\nReturn ONLY the JSON object. No preamble, no markdown fences.`;\nconst prContextBlocks = prs.map(pr => {\n  const files = (pr.changed_files || []).map(f => `  ${f.status.toUpperCase()}: ${f.path} (+${f.lines_added}/-${f.lines_removed})`).join('\\n');\n  return `=== REPO: ${pr.repo_slug} ===\\nPR: #${pr.pr_id} — ${pr.pr_title}\\nDescription: ${pr.pr_description}\\nAuthor: ${pr.author}\\nCommits:\\n${(pr.commit_messages || []).map(m => '  - ' + m).join('\\n')}\\nFiles Changed:\\n${files}\\n\\nDiff:\\n${pr.diff}\\n`;\n}).join('\\n---\\n');\nconst contextHintBlock = data.context_hint ? `\\n=== CONTEXT HINT ===\\n${data.context_hint}\\n` : '';\nconst requestBody = JSON.stringify({\n  model: 'claude-sonnet-4-6',\n  max_tokens: 2048,\n  system: systemPrompt,\n  messages: [{ role: 'user', content: `${contextHintBlock}\\n${prContextBlocks}` }]\n});\nreturn [{ json: { ...data, _analysis_request: requestBody } }];"
+      },
+      "id": "n_09_build_analysis",
+      "name": "Build Analysis Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "YOUR_ANTHROPIC_API_KEY" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json._analysis_request }}",
+        "options": {}
+      },
+      "id": "n_10_claude_analysis",
+      "name": "Claude — PR Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2220, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prData = $('Build Analysis Payload').first().json;\nconst response = $input.first().json;\nlet analysis;\ntry {\n  const raw = response.content?.[0]?.text || '{}';\n  const cleaned = raw.replace(/```json\\n?/g, '').replace(/```\\n?/g, '').trim();\n  analysis = JSON.parse(cleaned);\n} catch(e) {\n  const firstPR = (prData.pr_group || [])[0] || {};\n  analysis = { feature_name: firstPR.pr_title || 'Unknown Feature', user_impact: 'unknown', what_changed: 'Analysis parsing failed.', user_actions: [], guide_title: firstPR.pr_title || 'Unknown Feature', complexity: 'moderate', affected_panels: ['tenant-admin'] };\n}\nreturn [{ json: { ...prData, analysis } }];"
+      },
+      "id": "n_11_parse_analysis",
+      "name": "Parse Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2440, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "YOUR_SLACK_WEBHOOK_URL",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ blocks: [{ type: 'section', text: { type: 'mrkdwn', text: '*🧠 Gate 2 — Analysis Ready*\\n\\n*Feature:* ' + $json.analysis.feature_name + '\\n*Guide Title:* ' + $json.analysis.guide_title + '\\n*User Impact:* ' + $json.analysis.user_impact + '\\n*Affected Panels:* ' + ($json.analysis.affected_panels || []).join(', ') + '\\n\\n*What Changed:*\\n' + $json.analysis.what_changed + '\\n\\n*What Users Can Now Do:*\\n' + ($json.analysis.user_actions || []).map((a, i) => (i+1) + '. ' + a).join('\\n') + '\\n\\n*Complexity:* ' + $json.analysis.complexity } }, { type: 'actions', elements: [{ type: 'button', text: { type: 'plain_text', text: 'Approve — Generate Guide', emoji: true }, style: 'primary', url: $execution.resumeUrl, action_id: 'approve_gate2' }] }] }) }}",
+        "options": {}
+      },
+      "id": "n_12_gate2_slack",
+      "name": "Gate 2 — Slack Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2660, 600]
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "options": {}
+      },
+      "id": "n_13_gate2_wait",
+      "name": "Gate 2 — Wait for Approval",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [2880, 600],
+      "webhookId": "gate2-approve-v2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const userAgent = ($json.headers?.['user-agent'] || '').toLowerCase();\nif (userAgent.includes('slackbot') || userAgent.includes('slack') || userAgent.includes('bot')) {\n  return [];\n}\n\nconst data = $('Parse Analysis').first().json;\nconst analysis = data.analysis;\nconst prs = data.pr_group || [];\nconst panelToneMap = {\n  'tenant-admin': 'Professional but approachable. Audience: merchants and business owners.',\n  'ordering': 'Warm, simple, encouraging. Audience: end customers placing orders.',\n  'ops': 'Direct and functional. Audience: internal ops team.'\n};\nconst panels = analysis.affected_panels || ['tenant-admin'];\nconst toneGuidance = panels.map(p => `${p}: ${panelToneMap[p] || 'Professional and clear.'}`).join('\\n');\nconst repoSummaries = prs.map(pr => `- ${pr.repo_slug}: ${pr.service_md.split('\\n').slice(0,3).join(' ')}`).join('\\n');\nconst systemPrompt = `You are an expert documentation writer for a quick commerce SaaS platform.\\n\\nWrite a complete user-facing guide in Markdown:\\n\\n# [Guide Title]\\n\\n## Overview\\n2-3 sentences explaining what this feature is and why it exists.\\n\\n## How to Use It\\nNumbered step-by-step instructions.\\n\\n## What You Can Do\\nBullet list of capabilities.\\n\\n## Things to Know\\n2-3 notes using:\\n💡 Note: for tips\\n⚠️ Important: for warnings\\n\\nTone guidance:\\n${toneGuidance}\\n\\nRules: NEVER mention code or technical terms. Always write in second person. Output clean Markdown only.`;\nconst contextHintBlock = data.context_hint ? `Support engineer context: ${data.context_hint}\\n\\n` : '';\nconst requestBody = JSON.stringify({\n  model: 'claude-sonnet-4-6',\n  max_tokens: 4096,\n  system: systemPrompt,\n  messages: [{ role: 'user', content: `${contextHintBlock}Guide Title: ${analysis.guide_title}\\n\\nFeature Summary: ${analysis.what_changed}\\n\\nWhat users can now do:\\n${(analysis.user_actions || []).join('\\n')}\\n\\nRepositories:\\n${repoSummaries}\\n\\nComplexity: ${analysis.complexity}\\nAffected Panels: ${panels.join(', ')}` }]\n});\nreturn [{ json: { ...data, _guide_request: requestBody } }];"
+      },
+      "id": "n_14_build_guide",
+      "name": "Build Guide Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3100, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "YOUR_ANTHROPIC_API_KEY" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ $json._guide_request }}",
+        "options": {}
+      },
+      "id": "n_15_claude_guide",
+      "name": "Claude — Generate Guide",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3320, 600]
+    },
+    {
+      "parameters": {
+        "jsCode": "const prData = $('Build Guide Payload').first().json;\nconst response = $input.first().json;\nconst guideContent = response.content?.[0]?.text || '# Guide generation failed';\nconst today = new Date().toISOString().split('T')[0];\nconst docTitle = `[DRAFT] ${prData.analysis.guide_title} — ${today}`;\nreturn [{ json: { ...prData, guide_content: guideContent, doc_title: docTitle } }];"
+      },
+      "id": "n_16_parse_guide",
+      "name": "Parse Guide",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3540, 600]
+    },
+    {
+      "parameters": {
+        "title": "={{ $json.doc_title }}",
+        "folderId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_DRIVE_FOLDER_ID",
+          "mode": "id"
+        }
+      },
+      "id": "n_17_create_doc",
+      "name": "Create Google Doc Draft",
+      "type": "n8n-nodes-base.googleDocs",
+      "typeVersion": 2,
+      "position": [3760, 600],
+      "credentials": {
+        "googleDocsOAuth2Api": { "id": "YOUR_GOOGLE_DOCS_CREDENTIAL_ID", "name": "Google Docs OAuth" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://docs.googleapis.com/v1/documents/' + $json.id + ':batchUpdate' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDocsOAuth2Api",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ requests: [{ insertText: { text: $('Parse Guide').first().json.guide_content, location: { index: 1 } } }] }) }}",
+        "options": {}
+      },
+      "id": "n_18_insert_content",
+      "name": "Insert Guide Content",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3980, 600],
+      "credentials": {
+        "googleDocsOAuth2Api": { "id": "YOUR_GOOGLE_DOCS_CREDENTIAL_ID", "name": "Google Docs OAuth" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "YOUR_SLACK_WEBHOOK_URL",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{ JSON.stringify({ text: '*✅ Gate 3 — Documentation Draft Created*\\n\\n*Feature:* ' + $('Parse Guide').first().json.analysis.feature_name + '\\n*Guide Title:* ' + $('Parse Guide').first().json.doc_title + '\\n*Repos:* ' + ($('Parse Guide').first().json.pr_group || []).map(p => p.repo_slug).join(', ') + '\\n*Requested by:* ' + $('Parse Guide').first().json.requester + ($('Parse Guide').first().json.context_hint ? '\\n*Hint used:* ' + $('Parse Guide').first().json.context_hint : '') + '\\n\\n📄 *Draft:* ' + ($json.webViewLink || 'Check Google Drive folder') + '\\n\\n👀 Ready for review → add screenshots → publish' }) }}",
+        "options": {}
+      },
+      "id": "n_19_gate3_slack",
+      "name": "Gate 3 — Draft Ready",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4200, 600]
+    }
+  ],
+  "connections": {
+    "Slack /createguide Webhook": {
+      "main": [[{ "node": "Parse Slack Command", "type": "main", "index": 0 }]]
+    },
+    "Parse Slack Command": {
+      "main": [[{ "node": "Split PRs", "type": "main", "index": 0 }]]
+    },
+    "Split PRs": {
+      "main": [[{ "node": "Fetch PR Metadata", "type": "main", "index": 0 }]]
+    },
+    "Fetch PR Metadata": {
+      "main": [[{ "node": "Fetch Diffstat", "type": "main", "index": 0 }]]
+    },
+    "Fetch Diffstat": {
+      "main": [[{ "node": "Fetch Commits", "type": "main", "index": 0 }]]
+    },
+    "Fetch Commits": {
+      "main": [[{ "node": "Fetch Diff", "type": "main", "index": 0 }]]
+    },
+    "Fetch Diff": {
+      "main": [[{ "node": "Aggregate PR Data", "type": "main", "index": 0 }]]
+    },
+    "Aggregate PR Data": {
+      "main": [[{ "node": "Build Analysis Payload", "type": "main", "index": 0 }]]
+    },
+    "Build Analysis Payload": {
+      "main": [[{ "node": "Claude — PR Analysis", "type": "main", "index": 0 }]]
+    },
+    "Claude — PR Analysis": {
+      "main": [[{ "node": "Parse Analysis", "type": "main", "index": 0 }]]
+    },
+    "Parse Analysis": {
+      "main": [[{ "node": "Gate 2 — Slack Notification", "type": "main", "index": 0 }]]
+    },
+    "Gate 2 — Slack Notification": {
+      "main": [[{ "node": "Gate 2 — Wait for Approval", "type": "main", "index": 0 }]]
+    },
+    "Gate 2 — Wait for Approval": {
+      "main": [[{ "node": "Build Guide Payload", "type": "main", "index": 0 }]]
+    },
+    "Build Guide Payload": {
+      "main": [[{ "node": "Claude — Generate Guide", "type": "main", "index": 0 }]]
+    },
+    "Claude — Generate Guide": {
+      "main": [[{ "node": "Parse Guide", "type": "main", "index": 0 }]]
+    },
+    "Parse Guide": {
+      "main": [[{ "node": "Create Google Doc Draft", "type": "main", "index": 0 }]]
+    },
+    "Create Google Doc Draft": {
+      "main": [[{ "node": "Insert Guide Content", "type": "main", "index": 0 }]]
+    },
+    "Insert Guide Content": {
+      "main": [[{ "node": "Gate 3 — Draft Ready", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true
+  }
+}
